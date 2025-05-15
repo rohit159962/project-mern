@@ -5,23 +5,10 @@ const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const cloudinary = require("cloudinary").v2;
-const path = require("path");
 const cors = require("cors");
-const fs = require("fs");
 
 app.use(express.json());
 app.use(cors());
-
-// Create upload/images directory for temporary storage
-const uploadDir = path.join(__dirname, "upload/images");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-// Database Connection With MongoDB
-mongoose.connect(
-  "mongodb+srv://rthakur2270:rohit1599@cluster0.xizfvit.mongodb.net/clothify"
-);
 
 // Configure Cloudinary
 cloudinary.config({
@@ -30,21 +17,18 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// API Creation
-app.get("/", (req, res) => {
-  res.send("Express App is Running");
-});
+// Database Connection With MongoDB
+mongoose.connect(
+  process.env.MONGO_URI || "mongodb+srv://rthakur2270:rohit1599@cluster0.xizfvit.mongodb.net/clothify",
+  {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  }
+).then(() => console.log("MongoDB connected"))
+  .catch((err) => console.error("MongoDB connection error:", err));
 
-// Image Storage Engine
-const storage = multer.diskStorage({
-  destination: "./upload/images",
-  filename: (req, file, cb) => {
-    return cb(
-      null,
-      `${file.fieldname}_${Date.now()}${path.extname(file.originalname)}`
-    );
-  },
-});
+// Image Storage Engine (Memory Storage for Render)
+const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
 // Creating Upload Endpoint for images
@@ -54,20 +38,18 @@ app.post("/upload", upload.single("product"), async (req, res) => {
   }
 
   try {
-    // Upload to Cloudinary
-    const result = await cloudinary.uploader.upload(req.file.path, {
-      folder: "clothify_products",
-    });
-
-    // Delete local file
-    fs.unlinkSync(req.file.path);
-
-    res.json({
-      success: 1,
-      image_url: result.secure_url,
-    });
+    const result = await cloudinary.uploader.upload_stream(
+      { folder: "clothify_products", public_id: `product_${Date.now()}` },
+      (error, result) => {
+        if (error) {
+          console.error("Cloudinary upload error:", error);
+          return res.status(500).json({ success: 0, message: "Cloudinary upload error" });
+        }
+        res.json({ success: 1, image_url: result.secure_url });
+      }
+    ).end(req.file.buffer);
   } catch (error) {
-    console.error("Cloudinary upload error:", error);
+    console.error("Upload endpoint error:", error);
     res.status(500).json({ success: 0, message: "Failed to upload image" });
   }
 });
@@ -100,7 +82,7 @@ const Product = mongoose.model("Product", {
   },
   date: {
     type: Date,
-    default: Date.now(),
+    default: Date.now,
   },
   available: {
     type: Boolean,
@@ -109,47 +91,67 @@ const Product = mongoose.model("Product", {
 });
 
 app.post("/addproduct", async (req, res) => {
-  let products = await Product.find({});
-  let id;
-  if (products.length > 0) {
-    let last_product_array = products.slice(-1);
-    let last_product = last_product_array[0];
-    id = last_product.id + 1;
-  } else {
-    id = 1;
+  try {
+    console.log("Add product request body:", req.body);
+    const { name, image, category, new_price, old_price } = req.body;
+
+    // Validate input
+    if (!name || !image || !category || !new_price || !old_price) {
+      return res.status(400).json({ success: false, message: "Missing required fields" });
+    }
+
+    // Generate ID
+    let products = await Product.find({}).sort({ id: -1 });
+    let id = products.length > 0 ? products[0].id + 1 : 1;
+
+    // Create product
+    const product = new Product({
+      id,
+      name,
+      image,
+      category,
+      new_price: Number(new_price),
+      old_price: Number(old_price),
+    });
+
+    await product.save();
+    console.log("Product saved:", product);
+
+    res.json({
+      success: true,
+      name,
+    });
+  } catch (error) {
+    console.error("Add product error:", error);
+    res.status(500).json({ success: false, message: error.message || "Server error" });
   }
-  const product = new Product({
-    id: req.body.id,
-    name: req.body.name,
-    image: req.body.image,
-    category: req.body.category,
-    new_price: req.body.new_price,
-    old_price: req.body.old_price,
-  });
-  console.log(product);
-  await product.save();
-  console.log("saved");
-  res.json({
-    success: true,
-    name: req.body.name,
-  });
 });
 
 // Creating API for deleting a product
 app.post("/removeproduct", async (req, res) => {
-  await Product.findOneAndDelete({ id: req.body.id });
-  console.log("removed");
-  res.json({
-    success: true,
-    name: req.body.name,
-  });
+  try {
+    await Product.findOneAndDelete({ id: req.body.id });
+    console.log("Product removed:", req.body.id);
+    res.json({
+      success: true,
+      name: req.body.name,
+    });
+  } catch (error) {
+    console.error("Remove product error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // Creating API for getting all products
 app.get("/allproducts", async (req, res) => {
-  let products = await Product.find({});
-  console.log("All products fetched");
-  res.send(products);
+  try {
+    let products = await Product.find({});
+    console.log("All products fetched");
+    res.send(products);
+  } catch (error) {
+    console.error("All products error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // Schema creating for user model
@@ -175,78 +177,98 @@ const Users = mongoose.model("Users", {
 
 // Creating Endpoint for registering the user
 app.post("/signup", async (req, res) => {
-  let check = await Users.findOne({ email: req.body.email });
-  if (check) {
-    return res.status(400).json({
-      success: false,
-      errors: "User Already Exists",
+  try {
+    let check = await Users.findOne({ email: req.body.email });
+    if (check) {
+      return res.status(400).json({
+        success: false,
+        errors: "User Already Exists",
+      });
+    }
+    let cart = {};
+    for (let i = 0; i <= 300; i++) {
+      cart[i] = 0;
+    }
+    const user = new Users({
+      name: req.body.username,
+      email: req.body.email,
+      password: req.body.password,
+      cartData: cart,
     });
+    await user.save();
+    const data = {
+      user: {
+        id: user.id,
+      },
+    };
+    const token = jwt.sign(data, "secret_ecom");
+    res.json({
+      success: true,
+      token,
+    });
+  } catch (error) {
+    console.error("Signup error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
-  let cart = {};
-  for (let i = 0; i < 300 + 1; i++) {
-    cart[i] = 0;
-  }
-  const user = new Users({
-    name: req.body.username,
-    email: req.body.email,
-    password: req.body.password,
-    cartData: cart,
-  });
-  await user.save();
-  const data = {
-    user: {
-      id: user.id,
-    },
-  };
-  const token = jwt.sign(data, "secret_ecom");
-  res.json({
-    success: true,
-    token,
-  });
 });
 
 // Creating endpoint for user login
 app.post("/login", async (req, res) => {
-  let user = await Users.findOne({ email: req.body.email });
-  if (user) {
-    const passCompare = req.body.password === user.password;
-    if (passCompare) {
-      const data = {
-        user: {
-          id: user.id,
-        },
-      };
-      const token = jwt.sign(data, "secret_ecom");
-      res.json({
-        success: true,
-        token,
-      });
+  try {
+    let user = await Users.findOne({ email: req.body.email });
+    if (user) {
+      const passCompare = req.body.password === user.password;
+      if (passCompare) {
+        const data = {
+          user: {
+            id: user.id,
+          },
+        };
+        const token = jwt.sign(data, "secret_ecom");
+        res.json({
+          success: true,
+          token,
+        });
+      } else {
+        res.json({
+          success: false,
+          errors: "Incorrect Password",
+        });
+      }
     } else {
       res.json({
         success: false,
-        errors: "Incorrect Password",
+        errors: "User Not Found",
       });
     }
-  } else {
-    res.json({
-      success: false,
-      errors: "User Not Found",
-    });
+  } catch (error) {
+    console.error("Login error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
 // Creating endpoint for new collection on home page
 app.get("/newcollections", async (req, res) => {
-  let products = await Product.find({});
-  let newcollection = products.slice(1).slice(-8);
-  res.send(newcollection);
+  try {
+    let products = await Product.find({});
+    let newcollection = products.slice(1).slice(-8);
+    res.send(newcollection);
+  } catch (error) {
+    console.error("New collections error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // Creating endpoint for popular in women category on home page
 app.get("/popularinwomen", async (req, res) => {
-  let products = await Product.find({ category: "women" });
-  let popular_in_women = products.slice(0, 4);
-  res.send(popular_in_women);
+  try {
+    let products = await Product.find({ category: "women" });
+    let popular_in_women = products.slice(0, 4);
+    res.send(popular_in_women);
+  } catch (error) {
+    console.error("Popular in women error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // Creating middleware to fetch user
@@ -272,37 +294,56 @@ const fetchUser = async (req, res, next) => {
 
 // Creating endpoint for adding products in cartdata
 app.post("/addtocart", fetchUser, async (req, res) => {
-  let userData = await Users.findOne({ _id: req.user.id });
-  userData.cartData[req.body.itemId] += 1;
-  await Users.findOneAndUpdate(
-    { _id: req.user.id },
-    { cartData: userData.cartData }
-  );
-  res.send("Added");
+  try {
+    let userData = await Users.findOne({ _id: req.user.id });
+    userData.cartData[req.body.itemId] += 1;
+    await Users.findOneAndUpdate(
+      { _id: req.user.id },
+      { cartData: userData.cartData }
+    );
+    res.send("Added");
+  } catch (error) {
+    console.error("Add to cart error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // Creating endpoint to remove products from cartData
 app.post("/removefromcart", fetchUser, async (req, res) => {
-  let userData = await Users.findOne({ _id: req.user.id });
-  if (userData.cartData[req.body.itemId] > 0)
-    userData.cartData[req.body.itemId] -= 1;
-  await Users.findOneAndUpdate(
-    { _id: req.user.id },
-    { cartData: userData.cartData }
-  );
-  res.send("Removed");
+  try {
+    let userData = await Users.findOne({ _id: req.user.id });
+    if (userData.cartData[req.body.itemId] > 0)
+      userData.cartData[req.body.itemId] -= 1;
+    await Users.findOneAndUpdate(
+      { _id: req.user.id },
+      { cartData: userData.cartData }
+    );
+    res.send("Removed");
+  } catch (error) {
+    console.error("Remove from cart error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 });
 
 // Creating endpoint to get cartdata
 app.post("/getcart", fetchUser, async (req, res) => {
-  let userData = await Users.findOne({ _id: req.user.id });
-  res.json(userData.cartData);
+  try {
+    let userData = await Users.findOne({ _id: req.user.id });
+    res.json(userData.cartData);
+  } catch (error) {
+    console.error("Get cart error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+app.get("/", (req, res) => {
+  res.send("Express App is Running");
 });
 
 app.listen(port, (error) => {
   if (!error) {
     console.log("Server Running on Port " + port);
   } else {
-    console.log("Error : " + error);
+    console.error("Server error:", error);
   }
 });
