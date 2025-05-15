@@ -1,28 +1,41 @@
-const port = process.env.PORT || 4000;
+const port = 4000;
 const express = require("express");
 const app = express();
 const mongoose = require("mongoose");
 const jwt = require("jsonwebtoken");
 const multer = require("multer");
+const cloudinary = require("cloudinary").v2;
 const path = require("path");
 const cors = require("cors");
+const fs = require("fs");
 
 app.use(express.json());
 app.use(cors());
 
-//Database Connection With MongoDB
+// Create upload/images directory for temporary storage
+const uploadDir = path.join(__dirname, "upload/images");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Database Connection With MongoDB
 mongoose.connect(
   "mongodb+srv://rthakur2270:rohit1599@cluster0.xizfvit.mongodb.net/clothify"
 );
 
-//API Creation
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
+// API Creation
 app.get("/", (req, res) => {
   res.send("Express App is Running");
 });
 
 // Image Storage Engine
-
 const storage = multer.diskStorage({
   destination: "./upload/images",
   filename: (req, file, cb) => {
@@ -33,15 +46,33 @@ const storage = multer.diskStorage({
   },
 });
 const upload = multer({ storage: storage });
-//Creating Upload Endpoint for images
-app.use("/images", express.static("upload/images"));
-app.post("/upload", upload.single("product"), (req, res) => {
-  res.json({
-    success: 1,
-    image_url: `https://project-mern-frontend-1jz1.onrender.com/images/${req.file.filename}`,
-  });
+
+// Creating Upload Endpoint for images
+app.post("/upload", upload.single("product"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: 0, message: "No file uploaded" });
+  }
+
+  try {
+    // Upload to Cloudinary
+    const result = await cloudinary.uploader.upload(req.file.path, {
+      folder: "clothify_products",
+    });
+
+    // Delete local file
+    fs.unlinkSync(req.file.path);
+
+    res.json({
+      success: 1,
+      image_url: result.secure_url,
+    });
+  } catch (error) {
+    console.error("Cloudinary upload error:", error);
+    res.status(500).json({ success: 0, message: "Failed to upload image" });
+  }
 });
-//Schema for creating products
+
+// Schema for creating products
 const Product = mongoose.model("Product", {
   id: {
     type: Number,
@@ -76,6 +107,7 @@ const Product = mongoose.model("Product", {
     default: true,
   },
 });
+
 app.post("/addproduct", async (req, res) => {
   let products = await Product.find({});
   let id;
@@ -102,7 +134,8 @@ app.post("/addproduct", async (req, res) => {
     name: req.body.name,
   });
 });
-//Creating API for deleting a product
+
+// Creating API for deleting a product
 app.post("/removeproduct", async (req, res) => {
   await Product.findOneAndDelete({ id: req.body.id });
   console.log("removed");
@@ -111,7 +144,8 @@ app.post("/removeproduct", async (req, res) => {
     name: req.body.name,
   });
 });
-//Creating API for getting all products
+
+// Creating API for getting all products
 app.get("/allproducts", async (req, res) => {
   let products = await Product.find({});
   console.log("All products fetched");
@@ -119,7 +153,6 @@ app.get("/allproducts", async (req, res) => {
 });
 
 // Schema creating for user model
-
 const Users = mongoose.model("Users", {
   name: {
     type: String,
@@ -140,7 +173,7 @@ const Users = mongoose.model("Users", {
   },
 });
 
-//Creating Endpoint for registering the user
+// Creating Endpoint for registering the user
 app.post("/signup", async (req, res) => {
   let check = await Users.findOne({ email: req.body.email });
   if (check) {
@@ -172,13 +205,12 @@ app.post("/signup", async (req, res) => {
   });
 });
 
-//Creating endpoint for user login
-
+// Creating endpoint for user login
 app.post("/login", async (req, res) => {
   let user = await Users.findOne({ email: req.body.email });
-  if(user){
+  if (user) {
     const passCompare = req.body.password === user.password;
-    if(passCompare){
+    if (passCompare) {
       const data = {
         user: {
           id: user.id,
@@ -189,38 +221,35 @@ app.post("/login", async (req, res) => {
         success: true,
         token,
       });
-    }else{
-     res.json({
-       success: false,
-       errors: "Incorrect Password"
-     })
+    } else {
+      res.json({
+        success: false,
+        errors: "Incorrect Password",
+      });
     }
-
+  } else {
+    res.json({
+      success: false,
+      errors: "User Not Found",
+    });
   }
-else{
-  res.json({
-    success: false,
-    errors: "User Not Found"
-  })
-}
-  
-})
-
-//Creating endpoint for new collection on home page
-app.get("/newcollections", async (req, res) => {
- let products = await Product.find({});
- let newcollection = products.slice(1).slice(-8);  
- res.send(newcollection);   
 });
 
-//Creating endpoint for popular in women category on home page
-app.get('/popularinwomen',async(req,res)=> {
- let products = await Product.find({category:"women"});
- let popular_in_women = products.slice(0,4);  
- res.send(popular_in_women);   
-})
+// Creating endpoint for new collection on home page
+app.get("/newcollections", async (req, res) => {
+  let products = await Product.find({});
+  let newcollection = products.slice(1).slice(-8);
+  res.send(newcollection);
+});
 
-//Creating middleware to fetch user 
+// Creating endpoint for popular in women category on home page
+app.get("/popularinwomen", async (req, res) => {
+  let products = await Product.find({ category: "women" });
+  let popular_in_women = products.slice(0, 4);
+  res.send(popular_in_women);
+});
+
+// Creating middleware to fetch user
 const fetchUser = async (req, res, next) => {
   const token = req.header("auth-token");
   if (!token) {
@@ -239,30 +268,34 @@ const fetchUser = async (req, res, next) => {
       errors: "Please authenticate using a valid token",
     });
   }
-}
+};
 
-
-
-//Creating endpoint for adding products in cartdata
-app.post("/addtocart",fetchUser, async (req, res) => {
-  let userData = await Users.findOne({_id:req.user.id});
+// Creating endpoint for adding products in cartdata
+app.post("/addtocart", fetchUser, async (req, res) => {
+  let userData = await Users.findOne({ _id: req.user.id });
   userData.cartData[req.body.itemId] += 1;
-  await Users.findOneAndUpdate({_id:req.user.id},{cartData:userData.cartData});
+  await Users.findOneAndUpdate(
+    { _id: req.user.id },
+    { cartData: userData.cartData }
+  );
   res.send("Added");
 });
 
-//creating endpoint to remove products from cartData
-app.post("/removefromcart",fetchUser, async (req, res) => {
-  let userData = await Users.findOne({_id:req.user.id});
-  if(userData.cartData[req.body.itemId]>0)
-  userData.cartData[req.body.itemId] -= 1;
-  await Users.findOneAndUpdate({_id:req.user.id},{cartData:userData.cartData});
+// Creating endpoint to remove products from cartData
+app.post("/removefromcart", fetchUser, async (req, res) => {
+  let userData = await Users.findOne({ _id: req.user.id });
+  if (userData.cartData[req.body.itemId] > 0)
+    userData.cartData[req.body.itemId] -= 1;
+  await Users.findOneAndUpdate(
+    { _id: req.user.id },
+    { cartData: userData.cartData }
+  );
   res.send("Removed");
 });
 
-//creating endpoint to get cartdata
-app.post("/getcart",fetchUser, async (req, res) => {
-  let userData = await Users.findOne({_id:req.user.id});
+// Creating endpoint to get cartdata
+app.post("/getcart", fetchUser, async (req, res) => {
+  let userData = await Users.findOne({ _id: req.user.id });
   res.json(userData.cartData);
 });
 
