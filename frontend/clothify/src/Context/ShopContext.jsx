@@ -17,11 +17,11 @@ const ShopContextProvider = ({ children }) => {
   const [cartItems, setCartItems] = useState(getDefaultCart());
 
   useEffect(() => {
-    fetch("http://localhost:4000/allproducts")
+    fetch("https://project-mern-rdok.onrender.com/allproducts")
       .then((res) => res.json())
       .then((data) => setAll_product(data));
       if(localStorage.getItem("auth-token")){
-        fetch("http://localhost:4000/getcart", {
+        fetch("https://project-mern-rdok.onrender.com/getcart", {
           method: "POST",
           headers: {
             Accept: "application/form-data",
@@ -37,7 +37,7 @@ const ShopContextProvider = ({ children }) => {
   const addToCart = (itemId) => {
     setCartItems((prev) => ({ ...prev, [itemId]: prev[itemId] + 1 }));
     if(localStorage.getItem("auth-token")){
-      fetch("http://localhost:4000/addtocart", {
+      fetch("https://project-mern-rdok.onrender.com/addtocart", {
         method: "POST",
         headers: {
           Accept: "application/form-data",
@@ -53,7 +53,7 @@ const ShopContextProvider = ({ children }) => {
   const removeFromCart = (itemId) => {
     setCartItems((prev) => ({ ...prev, [itemId]: prev[itemId] - 1 }));
     if(localStorage.getItem("auth-token")){
-      fetch("http://localhost:4000/removefromcart", {
+      fetch("https://project-mern-rdok.onrender.com/removefromcart", {
         method: "POST",
         headers: {
           Accept: "application/form-data",
