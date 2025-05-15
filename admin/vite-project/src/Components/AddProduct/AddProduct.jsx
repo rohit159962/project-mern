@@ -2,6 +2,7 @@ import React from "react";
 import "./AddProduct.css";
 import upload_area from "../../assets/upload_area.svg";
 import { useState } from "react";
+
 const AddProduct = () => {
   const [image, setImage] = useState(false);
   const [productDetails, setProductDetails] = useState({
@@ -11,46 +12,84 @@ const AddProduct = () => {
     old_price: "",
     new_price: "",
   });
+
   const imageHandler = (e) => {
     setImage(e.target.files[0]);
   };
+
   const changeHandler = (e) => {
     setProductDetails({ ...productDetails, [e.target.name]: e.target.value });
   };
-  const ADD_Product = async () => {
-    let responseData;
-    let product = productDetails;
-    let formData = new FormData();
-    formData.append("product", image);
 
-    await fetch("https://project-mern-rdok.onrender.com/upload", {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-      },
-      body: formData,
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        responseData = data;
+  const ADD_Product = async () => {
+    if (!image) {
+      alert("Please select an image");
+      return;
+    }
+
+    let product = { ...productDetails };
+
+    try {
+      let formData = new FormData();
+      formData.append("product", image);
+
+      const uploadResponse = await fetch("https://project-mern-rdok.onrender.com/upload", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+        },
+        body: formData,
       });
-      if(responseData.success){
+
+      // Check if response is JSON
+      const contentType = uploadResponse.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await uploadResponse.text();
+        console.error("Non-JSON response from /upload:", text);
+        throw new Error(`Expected JSON, got ${contentType || "unknown"}: ${text.slice(0, 100)}`);
+      }
+
+      const responseData = await uploadResponse.json();
+      console.log("Upload response:", responseData);
+
+      if (responseData.success) {
         product.image = responseData.image_url;
-        console.log(product);
-        await fetch("https://project-mern-rdok.onrender.com/addproduct", {
+        console.log("Product to add:", product);
+
+        const addResponse = await fetch("https://project-mern-rdok.onrender.com/addproduct", {
           method: "POST",
           headers: {
             Accept: "application/json",
             "Content-Type": "application/json",
           },
           body: JSON.stringify(product),
-        })
-          .then((res) => res.json())
-          .then((data) => {
-            data.success ? alert("Product Added") : alert("Failed");
-          });
+        });
+
+        // Check if addResponse is JSON
+        const addContentType = addResponse.headers.get("content-type");
+        if (!addContentType || !addContentType.includes("application/json")) {
+          const text = await addResponse.text();
+          console.error("Non-JSON response from /addproduct:", text);
+          throw new Error(`Expected JSON, got ${addContentType || "unknown"}: ${text.slice(0, 100)}`);
+        }
+
+        const addData = await addResponse.json();
+        console.log("Add product response:", addData);
+
+        if (addData.success) {
+          alert("Product Added Successfully");
+        } else {
+          alert("Failed to Add Product: " + (addData.message || "Unknown error"));
+        }
+      } else {
+        alert("Image Upload Failed: " + (responseData.message || "Unknown error"));
       }
+    } catch (error) {
+      console.error("Error adding product:", error);
+      alert("Error: " + error.message);
+    }
   };
+
   return (
     <div className="add-product">
       <div className="addproduct-itemfield">
@@ -115,9 +154,7 @@ const AddProduct = () => {
         />
       </div>
       <button
-        onClick={() => {
-          ADD_Product();
-        }}
+        onClick={ADD_Product}
         className="addproduct-btn"
       >
         ADD
